@@ -8,6 +8,8 @@ import pandas as pd
 from datetime import datetime
 import shutil
 import time
+import json
+import subprocess
 
 # --------------------------------------------------
 # Config
@@ -38,8 +40,7 @@ def save_face_image(emp_id, face_img):
     os.makedirs(emp_dir, exist_ok=True)
     count = len(os.listdir(emp_dir))
     if count < MAX_REG_IMAGES:
-        path = os.path.join(emp_dir, f"{count}.jpg")
-        cv2.imwrite(path, face_img)
+        cv2.imwrite(os.path.join(emp_dir, f"{count}.jpg"), face_img)
     return count + 1
 
 def clear_temp_faces():
@@ -112,8 +113,8 @@ if menu == "Register Face":
                     bbox = det.location_data.relative_bounding_box
                     h, w, _ = frame.shape
 
-                    x, y = int(bbox.xmin * w), int(bbox.ymin * h)
-                    bw, bh = int(bbox.width * w), int(bbox.height * h)
+                    x, y = int(bbox.xmin*w), int(bbox.ymin*h)
+                    bw, bh = int(bbox.width*w), int(bbox.height*h)
 
                     face = frame[y:y+bh, x:x+bw]
                     if face.size == 0:
@@ -123,9 +124,9 @@ if menu == "Register Face":
                     progress = min(count / MAX_REG_IMAGES, 1.0)
 
                     progress_bar.progress(progress)
-                    status_text.success(f"Captured {count} / {MAX_REG_IMAGES} images")
+                    status_text.success(f"Captured {count}/{MAX_REG_IMAGES}")
 
-                    cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0,255,0), 2)
+                    cv2.rectangle(frame, (x,y), (x+bw,y+bh), (0,255,0), 2)
                     cv2.putText(frame, f"{int(progress*100)}%",
                                 (x, y-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,255,0), 2)
@@ -142,7 +143,7 @@ if menu == "Register Face":
         status_text.success("✅ Face registration completed!")
 
 # --------------------------------------------------
-# PAGE 2: GENERATE EMBEDDINGS
+# PAGE 2: GENERATE EMBEDDINGS (WITH PROGRESS BAR)
 # --------------------------------------------------
 elif menu == "Generate Embeddings":
     st.subheader("🧠 Generate Face Embeddings")
@@ -152,21 +153,51 @@ elif menu == "Generate Embeddings":
         if os.path.isdir(os.path.join(TEMP_FACE_DIR, d))
     ]
 
-    if registered_ids:
-        st.write("Registered IDs:")
-        st.code(", ".join(registered_ids))
-    else:
+    if not registered_ids:
         st.warning("No registered faces found.")
-
-    face_count = sum(len(files) for _, _, files in os.walk(TEMP_FACE_DIR))
-    st.info(f"Detected {face_count} face images for embedding generation.")
+    else:
+        st.code(", ".join(registered_ids))
 
     if st.button("Generate Embeddings"):
-        with st.spinner("Generating embeddings, please wait..."):
-            os.system("cd recognizer && fr_env\\Scripts\\activate && python generate_embeddings.py")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        cmd = [
+            "cmd", "/c",
+            "cd recognizer && fr_env\\Scripts\\activate && python generate_embeddings.py"
+        ]
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+
+        total = None
+
+        for line in process.stdout:
+            try:
+                msg = json.loads(line.strip())
+            except Exception:
+                continue
+
+            if msg["type"] == "init":
+                total = msg["total"]
+                status_text.info(f"Processing {total} users")
+
+            elif msg["type"] == "progress":
+                done = msg["processed"]
+                emp = msg["emp_id"]
+                progress_bar.progress(done / total)
+                status_text.success(f"{emp} processed ({done}/{total})")
+
+            elif msg["type"] == "done":
+                progress_bar.progress(1.0)
+                status_text.success("✅ Embeddings generated successfully!")
+                break
 
         clear_temp_faces()
-        st.success("✅ Embeddings generated and temporary images cleared!")
 
 # --------------------------------------------------
 # PAGE 3: MARK ATTENDANCE
@@ -222,7 +253,8 @@ elif menu == "Mark Attendance":
 
                     response = requests.post(
                         "http://127.0.0.1:8000/recognize",
-                        files={"face": img_encoded.tobytes()}
+                        files={"face": img_encoded.tobytes()},
+                        timeout=5
                     ).json()
 
                     emp_id = response.get("student_id")

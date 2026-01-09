@@ -2,6 +2,8 @@ import os
 import pickle
 import numpy as np
 from embedding_service import get_embedding
+import json
+import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMP_FACE_DIR = os.path.join(BASE_DIR, "..", "detector", "temp_faces")
@@ -19,18 +21,28 @@ if os.path.exists(EMBED_FILE) and os.path.getsize(EMBED_FILE) > 0:
 else:
     embeddings_db = {}
 
-print("🔍 Scanning registered faces...")
+# --------------------------------------------------
+# Scan users
+# --------------------------------------------------
+users = [
+    d for d in os.listdir(TEMP_FACE_DIR)
+    if os.path.isdir(os.path.join(TEMP_FACE_DIR, d))
+]
+
+total_users = len(users)
+processed = 0
+
+print(json.dumps({
+    "type": "init",
+    "total": total_users
+}))
+sys.stdout.flush()
 
 # --------------------------------------------------
 # Generate embeddings
 # --------------------------------------------------
-for emp_id in os.listdir(TEMP_FACE_DIR):
+for emp_id in users:
     emp_path = os.path.join(TEMP_FACE_DIR, emp_id)
-
-    if not os.path.isdir(emp_path):
-        continue
-
-    print(f"🧑 Processing ID: {emp_id}")
     embeddings = []
 
     for img_name in os.listdir(emp_path):
@@ -38,14 +50,21 @@ for emp_id in os.listdir(TEMP_FACE_DIR):
         try:
             emb = get_embedding(img_path)
             embeddings.append(emb)
-        except Exception as e:
-            print(f"⚠️ Skipped {img_name}: {e}")
+        except Exception:
+            pass
 
     if embeddings:
         embeddings_db[emp_id] = np.mean(embeddings, axis=0)
-        print(f"✅ Embedding saved for {emp_id}")
-    else:
-        print(f"❌ No valid faces for {emp_id}")
+
+    processed += 1
+
+    # 🔥 Emit progress
+    print(json.dumps({
+        "type": "progress",
+        "processed": processed,
+        "emp_id": emp_id
+    }))
+    sys.stdout.flush()
 
 # --------------------------------------------------
 # Save embeddings
@@ -53,4 +72,5 @@ for emp_id in os.listdir(TEMP_FACE_DIR):
 with open(EMBED_FILE, "wb") as f:
     pickle.dump(embeddings_db, f)
 
-print("🎉 All embeddings generated successfully!")
+print(json.dumps({"type": "done"}))
+sys.stdout.flush()
