@@ -1,43 +1,56 @@
 import os
-import cv2
-import numpy as np
 import pickle
+import numpy as np
 from embedding_service import get_embedding
 
-TEMP_FACE_DIR = "../detector/temp_faces"
-EMBEDDING_FILE = "../embeddings/faces.pkl"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMP_FACE_DIR = os.path.join(BASE_DIR, "..", "detector", "temp_faces")
+EMBED_DIR = os.path.join(BASE_DIR, "..", "embeddings")
+EMBED_FILE = os.path.join(EMBED_DIR, "faces.pkl")
 
-os.makedirs("../embeddings", exist_ok=True)
+os.makedirs(EMBED_DIR, exist_ok=True)
 
-# Load existing embeddings if present
-if os.path.exists(EMBEDDING_FILE):
-    with open(EMBEDDING_FILE, "rb") as f:
-        data = pickle.load(f)
+# --------------------------------------------------
+# Load existing embeddings
+# --------------------------------------------------
+if os.path.exists(EMBED_FILE) and os.path.getsize(EMBED_FILE) > 0:
+    with open(EMBED_FILE, "rb") as f:
+        embeddings_db = pickle.load(f)
 else:
-    data = {}
+    embeddings_db = {}
 
-student_embeddings = []
+print("🔍 Scanning registered faces...")
 
-student_id = input("Enter Student ID for these faces: ")
+# --------------------------------------------------
+# Generate embeddings
+# --------------------------------------------------
+for emp_id in os.listdir(TEMP_FACE_DIR):
+    emp_path = os.path.join(TEMP_FACE_DIR, emp_id)
 
-for img_name in os.listdir(TEMP_FACE_DIR):
-    img_path = os.path.join(TEMP_FACE_DIR, img_name)
-    face = cv2.imread(img_path)
-
-    if face is None:
+    if not os.path.isdir(emp_path):
         continue
 
-    emb = get_embedding(face)
-    student_embeddings.append(emb)
+    print(f"🧑 Processing ID: {emp_id}")
+    embeddings = []
 
-if len(student_embeddings) == 0:
-    print("No faces found. Exiting.")
-    exit()
+    for img_name in os.listdir(emp_path):
+        img_path = os.path.join(emp_path, img_name)
+        try:
+            emb = get_embedding(img_path)
+            embeddings.append(emb)
+        except Exception as e:
+            print(f"⚠️ Skipped {img_name}: {e}")
 
-avg_embedding = np.mean(student_embeddings, axis=0)
-data[student_id] = avg_embedding
+    if embeddings:
+        embeddings_db[emp_id] = np.mean(embeddings, axis=0)
+        print(f"✅ Embedding saved for {emp_id}")
+    else:
+        print(f"❌ No valid faces for {emp_id}")
 
-with open(EMBEDDING_FILE, "wb") as f:
-    pickle.dump(data, f)
+# --------------------------------------------------
+# Save embeddings
+# --------------------------------------------------
+with open(EMBED_FILE, "wb") as f:
+    pickle.dump(embeddings_db, f)
 
-print(f"Embeddings saved successfully for student: {student_id}")
+print("🎉 All embeddings generated successfully!")
